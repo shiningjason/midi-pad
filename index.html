@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    body * {
+      box-sizing: border-box;
+    }
+    #app {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      display: flex;
+      flex-direction: column;
+      transform: translate(-50%, -50%)
+    }
+    #app > *:not(:first-child) {
+      margin-top: 16px;
+    }
+    .midi-pad {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      width: 400px;
+      height: 400px;
+    }
+    .midi-block {
+      position: relative;
+      flex: 0 0 25%;
+      padding: 1px;
+      overflow: hidden;
+    }
+    .midi-block__body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 98px;
+      height: 98px;
+      padding: 16px;
+      background-color: #d8d8d8;
+      font-size: 12px;
+      overflow: hidden;
+      user-select: none;
+    }
+    .midi-block--active > .midi-block__body {
+      cursor: pointer;
+    }
+    .upload-button {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: none;
+      width: 24px;
+      height: 24px;
+      padding: 2px;
+      color: #202020;
+      cursor: pointer;
+      user-select: none;
+    }
+    .midi-block:hover > .upload-button {
+      display: block;
+    }
+    button {
+      padding: 8px;
+      background-color: #fff;
+      border: 2px solid #121212;
+      color: #121212;
+      cursor: pointer;
+    }
+    button:focus {
+      outline: none;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .button-group {
+      display: flex;
+      width: 100%;
+    }
+    .button-group > button {
+      flex: 1;
+    }
+    .button-group > button:not(:first-child) {
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="midi-pad">
+      <div class="midi-block"
+        v-for="(sound, index) in sounds"
+        :class="{ 'midi-block--active': !!sound.name }"
+      >
+        <div class="midi-block__body"
+          v-text="sound.name"
+          :style="{ backgroundColor: sound.color }"
+          @click="sound.buffer && onSoundPlay(index)"
+        ></div>
+        <upload-sound-button ref="uploaders" class="upload-button" @upload="file => onSoundUpload(index, file)" />
+      </div>
+    </div>
+    <div class="button-group">
+      <button
+        v-text="!isRecording ? 'RECORD' : 'STOP'"
+        :disabled="isPlaying"
+        @click="onToggleRecord"
+      ></button>
+      <button
+        v-text="!isPlaying ? 'PLAY' : 'STOP'"
+        :disabled="!hasRecording || isRecording"
+        @click="onTogglePlay"
+      ></button>
+      <button :disabled="!hasRecording || isRecording || isPlaying">SHARE</button>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.4.2/vue.js"></script>
+  <script>
+    const FILENAME_REG_EXP = /^(?:.*\/)?([\w\d-_]+)(?:\..+)?$/
+    const COLORS = [
+      '#f9ed69',
+      '#f08a5d',
+      '#b83b5e',
+      '#6a2c70',
+      '#f38181',
+      '#fce38a',
+      '#eaffd0',
+      '#95e1d3',
+      '#2d4059',
+      '#ea5455',
+      '#f07b3f',
+      '#ffd460',
+      '#ffcfdf',
+      '#fefdca',
+      '#e0f9b5',
+      '#a5dee5'
+    ]
+    const KEY_CODES = [
+      49, 50, 51, 52,
+      81, 87, 69, 82,
+      65, 83, 68, 70,
+      90, 88, 67, 86
+    ]
+    const AUDIOS = [
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/acoustic-snare.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/bass-drum-1.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/chinese-cymbal.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/closed-hihat.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/crash-cymbal-1.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/crash-cymbal-2.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/electric-snare.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/hi-mid-tom.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/high-floor-tom.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/high-tom.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/low-floor-tom.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/low-mid-tom.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/low-tom.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/open-hihat.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/pedal-hihat.mp3',
+      'https://raw.githubusercontent.com/shiningjason1989/drum-sounds/master/ride-bell.mp3'
+    ]
+    const NUM_OF_SOUNDS = 16
+    const AudioContext = window.AudioContext || window.webkitAudioContext
+
+    const UploadSoundButton = Vue.extend({
+      template: `
+        <div>
+          <i class="material-icons" @click="openFileUploader">file_upload</i>
+          <input type="file" accept="audio/*" hidden ref="fileInput" @change="handleFileChange">
+        </div>
+      `,
+      methods: {
+        openFileUploader() {
+          this.$refs.fileInput.click()
+        },
+        handleFileChange(evt) {
+          const file = evt.target.files[0]
+          this.$emit('upload', file)
+        }
+      }
+    })
+
+    new Vue({
+      el: '#app',
+      data: {
+        sounds: [],
+        startRecordTime: undefined,
+        isRecording: false,
+        recordingEvents: undefined,
+        isPlaying: false
+      },
+      computed: {
+        hasRecording() {
+          return !!this.recordingEvents
+        }
+      },
+      methods: {
+        onSoundUpload(index, soundFile) {
+          const [_, name] = soundFile.name.match(FILENAME_REG_EXP)
+          this.$set(this.sounds, index, {
+            file: URL.createObjectURL(soundFile),
+            name,
+            color: COLORS[index],
+            buffer: undefined
+          })
+
+          const reader = new FileReader()
+          reader.onload = evt => {
+            this.audioContext.decodeAudioData(
+              evt.target.result,
+              buffer => this.onSoundLoad(index, buffer)
+            )
+          }
+          reader.readAsArrayBuffer(soundFile)
+        },
+        onSoundLoad(index, buffer) {
+          this.$set(this.sounds, index, Object.assign({}, this.sounds[index], {
+            buffer
+          }))
+        },
+        onSoundPlay(index) {
+          if (this.isRecording) this.onRecordEvent(index)
+
+          const { buffer } = this.sounds[index]
+
+          const gainNode = this.audioContext.createGain()
+          gainNode.connect(this.audioContext.destination)
+
+          const sourceNode = this.audioContext.createBufferSource()
+          sourceNode.buffer = buffer
+          sourceNode.connect(gainNode)
+          sourceNode.start()
+        },
+        onKeyup(evt) {
+          const keyCode = evt.which
+          const index = KEY_CODES.indexOf(keyCode)
+          if (index === -1) return
+
+          if (this.sounds[index].buffer) this.onSoundPlay(index)
+          else this.$refs.uploaders[index].openFileUploader()
+        },
+        onToggleRecord() {
+          this.isRecording = !this.isRecording
+          if (this.isRecording) {
+            this.startRecordTime = this.audioContext.currentTime
+            this.recordingEvents = []
+          }
+        },
+        onRecordEvent(index) {
+          this.recordingEvents.push({
+            index,
+            time: this.audioContext.currentTime - this.startRecordTime
+          })
+        },
+        onTogglePlay() {
+          this.scheduleIds && this.scheduleIds.forEach(id => clearTimeout(id))
+          this.isPlaying = !this.isPlaying
+          if (this.isPlaying) {
+            this.scheduleIds = []
+            for (let event of this.recordingEvents) {
+              this.scheduleIds.push(
+                setTimeout(() => this.onSoundPlay(event.index), event.time * 1000)
+              )
+            }
+          }
+        }
+      },
+      created() {
+        this.audioContext = new AudioContext()
+        for (let i = 0; i < NUM_OF_SOUNDS; i++) {
+          const file = AUDIOS[i]
+          const [_, name] = file.match(FILENAME_REG_EXP)
+          this.sounds.push({
+            file,
+            name,
+            color: COLORS[i],
+            buffer: undefined
+          })
+          fetch(file)
+            .then(res => res.arrayBuffer())
+            .then(res => this.audioContext.decodeAudioData(
+              res,
+              buffer => this.onSoundLoad(i, buffer)
+            ))
+        }
+        document.addEventListener('keyup', this.onKeyup)
+      },
+      beforeDestroy() {
+        document.removeEventListener('keyup', this.onKeyup)
+      },
+      components: {
+        UploadSoundButton
+      }
+    })
+  </script>
+</body>
+</html>
